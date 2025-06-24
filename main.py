@@ -9,10 +9,8 @@ import os
 import platform
 
 init(autoreset=True)
-
-API_TOKEN = "66e82f69e4b6f63fe227f33e"
 ROOM_NAMES = [
-    "Không xác định",
+    " ",
     "Nhà kho",
     "Phòng họp",
     "Phòng giám đốc",
@@ -23,27 +21,6 @@ ROOM_NAMES = [
     "Phòng nhân sự"
 ]
 
-headers = {
-    'accept': '*/*',
-    'accept-language': 'vi,en;q=0.9',
-    'cache-control': 'no-cache',
-    'country-code': 'vn',
-    'origin': 'https://xworld.info',
-    'pragma': 'no-cache',
-    'priority': 'u=1, i',
-    'referer': 'https://xworld.info/',
-    'sec-ch-ua': '"Google Chrome";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
-    'sec-ch-ua-mobile': '?1',
-    'sec-ch-ua-platform': '"Android"',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'cross-site',
-    'user-agent': 'Mozilla/5.0 (Linux; Android 13; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
-    'user-id': '10232348',
-    'user-login': 'login_v2',
-    'user-secret-key': '9c5d6e0e590c25229d6b398111ffb737eec1f385f7a08f2fa60a5815ef6b65c3',
-    'xb-language': 'vi-VN',
-}
 
 def clear_screen():
     if platform.system() == "Windows":
@@ -51,8 +28,8 @@ def clear_screen():
     else:
         os.system('clear')
 
-def fancy_print(text, color=Fore.WHITE, style=Style.NORMAL):
-    print(f"{style}{color}{text}{Style.RESET_ALL}")
+def fancy_print(text, color=Fore.WHITE, style=Style.NORMAL,e='\n'):
+    print(f"{style}{color}{text}{Style.RESET_ALL}",end=e)
 
 def display_header():
     current_time = dt.now().strftime("%H:%M:%S %d/%m/%Y")
@@ -269,6 +246,30 @@ def main():
             fancy_print(f"⚠️ Lỗi không mong muốn: {e}", Fore.RED, Style.BRIGHT)
             fancy_print("🔄 Thử lại sau 10 giây...", Fore.CYAN, Style.BRIGHT)
             time.sleep(10)
-
-if __name__ == "__main__":
-    main()
+display_header()
+fancy_print("Nhập user-id của bạn: ", Fore.GREEN, Style.BRIGHT,' ' )
+user_id=input()
+fancy_print("Nhập user-secret-key của bạn: ", Fore.GREEN, Style.BRIGHT,' ')
+user_secret_key=input()
+headers = {
+    'accept': '*/*',
+    'accept-language': 'vi,en;q=0.9',
+    'cache-control': 'no-cache',
+    'country-code': 'vn',
+    'origin': 'https://xworld.info',
+    'pragma': 'no-cache',
+    'priority': 'u=1, i',
+    'referer': 'https://xworld.info/',
+    'sec-ch-ua': '"Google Chrome";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
+    'sec-ch-ua-mobile': '?1',
+    'sec-ch-ua-platform': '"Android"',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'cross-site',
+    'user-agent': 'Mozilla/5.0 (Linux; Android 13; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
+    'user-id': user_id,
+    'user-login': 'login_v2',
+    'user-secret-key': user_secret_key,
+    'xb-language': 'vi-VN',
+}
+main()
