@@ -1,19 +1,431 @@
-import base64
-from cryptography.fernet import Fernet
+import requests
+from collections import defaultdict, Counter
+import statistics
+import time
+import random
 from datetime import datetime as dt
+import os
+import platform
+import json
+import math
 
-def deobfuscate_key(obfuscated: str) -> bytes:
-    return base64.b64decode(obfuscated)[::-1]
+try:
+    from colorama import Fore, Style, init
+    init(autoreset=True)
+    COLORAMA_AVAILABLE = True
+except ImportError:
+    COLORAMA_AVAILABLE = False
+    class Fore:
+        WHITE = RED = GREEN = YELLOW = BLUE = CYAN = MAGENTA = ""
+    class Style:
+        NORMAL = BRIGHT = RESET_ALL = ""
+
+ROOM_NAMES = [
+    " ",
+    "Nhà kho",
+    "Phòng họp", 
+    "Phòng giám đốc",
+    "Phòng trò chuyện",
+    "Phòng giám sát",
+    "Văn phòng",
+    "Phòng tài vụ",
+    "Phòng nhân sự"
+]
+
+CONFIG_FILE = "xworld_config.json"
+DATA_FILE = "dulieu.txt"
+STATS_FILE = "thongke.json"
+
+def load_config():
+    user_id=input('Nhập user-id của bạn:')
+    user_secret_key=input('Nhập secret-key của bạn:')
+    default_config = {
+        "user_id": user_id,
+        "user_secret_key": user_secret_key,
+        "risk_level": 0.3,  
+        "analysis_depth": 50, 
+        "lucky_factor": 0.2  
+    }
+    
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            return {**default_config, **config}
+    except:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(default_config, f, indent=2, ensure_ascii=False)
+        return default_config
+
+def save_stats(stats):
+    try:
+        with open(STATS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(stats, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        fancy_print(f"⚠️ Lỗi lưu thống kê: {e}", Fore.RED)
+
+def load_stats():
+    try:
+        with open(STATS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return {"wins": 0, "loses": 0, "total_games": 0, "win_streak": 0, "max_streak": 0}
+
+def clear_screen():
+    if platform.system() == "Windows":
+        os.system('cls')
+    else:
+        os.system('clear')
+
+def fancy_print(text, color=Fore.WHITE, style=Style.NORMAL, end='\n'):
+    if COLORAMA_AVAILABLE:
+        print(f"{style}{color}{text}{Style.RESET_ALL}", end=end)
+    else:
+        print(text, end=end)
+
+def display_header():
+    current_time = dt.now().strftime("%H:%M:%S %d/%m/%Y")
+    fancy_print("╔══════════════════════════════════════════╗", Fore.CYAN, Style.BRIGHT)
+    fancy_print("║         XWORLD - VUA THOÁT HIỂM          ║", Fore.CYAN, Style.BRIGHT)
+    fancy_print("║               Tool by NTC                ║", Fore.CYAN, Style.BRIGHT)
+    fancy_print("║ Tele:https://t.me/+RL_zVyZjvx1hZjc1      ║", Fore.CYAN, Style.BRIGHT)
+    fancy_print("║ YTB:https://www.youtube.com/@Tool-Xworld ║", Fore.CYAN, Style.BRIGHT)
+    fancy_print("║ Tiktok:https://www.tiktok.com/@cng1237929║", Fore.CYAN, Style.BRIGHT)
+    fancy_print("║ Zalo:0842010239                          ║", Fore.CYAN, Style.BRIGHT)
+    fancy_print(f"║ Thời gian: {current_time:<30}║", Fore.CYAN, Style.BRIGHT)
+    fancy_print("╚══════════════════════════════════════════╝", Fore.CYAN, Style.BRIGHT)
+
+def display_wallet_balance(headers):
+	user_id = headers['user-id']
+	json_data = {
+		'user_id': int(user_id),
+		'source': 'home',
+	}
+	for attempt in range(3):
+		try:
+			response = requests.post(
+				'https://wallet.3games.io/api/wallet/user_asset', 
+				headers=headers, 
+				json=json_data, 
+				timeout=15
+			)
+			if response.status_code == 200:
+				data = response.json()
+				assets = data.get("data", {}).get("user_asset", {})
+				build = assets.get("BUILD", 0)
+				world = assets.get("WORLD", 0)
+				usdt = assets.get("USDT", 0)
+				fancy_print("\n╔══════════════════════════════╗", Fore.YELLOW, Style.BRIGHT)
+				fancy_print("║        SỐ DƯ TÀI SẢN         ║", Fore.YELLOW, Style.BRIGHT)
+				fancy_print("╠══════════════════════════════╣", Fore.YELLOW, Style.BRIGHT)
+				fancy_print(f"║ BUILD : {build:<21,.2f}║", Fore.YELLOW, Style.BRIGHT)
+				fancy_print(f"║ WORLD : {world:<21,.2f}║", Fore.YELLOW, Style.BRIGHT)
+				fancy_print(f"║ USDT  : {usdt:<21,.2f}║", Fore.YELLOW, Style.BRIGHT)
+				fancy_print("╚══════════════════════════════╝\n", Fore.YELLOW, Style.BRIGHT)
+				return True
+			else:
+				fancy_print(f"⚠️ API trả về lỗi: {response.status_code}", Fore.YELLOW)
+		except requests.exceptions.Timeout:
+			fancy_print(f"⚠️ Timeout lần {attempt + 1}/3, thử lại...", Fore.YELLOW)
+		except Exception as e:
+			fancy_print(f"⚠️ Lỗi khi lấy số dư (lần {attempt + 1}/3): {e}", Fore.YELLOW)
+		if attempt < 2:
+			time.sleep(2)
+	fancy_print("⚠️ Không thể lấy thông tin số dư sau 3 lần thử!", Fore.RED, Style.BRIGHT)
+	return False
+def safe_api_call(url, headers, params=None, json_data=None, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            if json_data:
+                response = requests.post(url, headers=headers, json=json_data, timeout=15)
+            else:
+                response = requests.get(url, headers=headers, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                fancy_print(f"⚠️ API error {response.status_code} (lần {attempt + 1})", Fore.YELLOW)
+        except requests.exceptions.Timeout:
+            fancy_print(f"⚠️ Timeout lần {attempt + 1}/{max_retries}", Fore.YELLOW)
+        except Exception as e:
+            fancy_print(f"⚠️ Lỗi API lần {attempt + 1}/{max_retries}: {e}", Fore.YELLOW)
+        
+        if attempt < max_retries - 1:
+            time.sleep(2 ** attempt)
+    
+    return None
+
+def get_top10_data(headers):
+    params = {'asset': 'BUILD'}
+    res = safe_api_call('https://api.escapemaster.net/escape_game/recent_10_issues', headers, params=params)
+    
+    if not res or not res.get('data'):
+        fancy_print("⚠️ Không thể lấy dữ liệu top 10!", Fore.RED, Style.BRIGHT)
+        return [], []
+    
+    issue_ids = [i['issue_id'] for i in res['data']]
+    killed_rooms = [int(i['killed_room_id']) for i in res['data']]
+    return issue_ids, killed_rooms
+
+def get_top100_data(headers):
+    params = {'asset': 'BUILD'}
+    res = safe_api_call('https://api.escapemaster.net/escape_game/recent_100_issues', headers, params=params)
+    
+    if not res or not res.get('data') or not res['data'].get('room_id_2_killed_times'):
+        fancy_print("⚠️ Không thể lấy dữ liệu top 100!", Fore.RED, Style.BRIGHT)
+        return [], []
+    
+    room_data = res['data']['room_id_2_killed_times']
+    rooms = [int(i) for i in room_data.keys()]
+    kill_counts = [room_data[str(i)] for i in rooms]
+    return rooms, kill_counts
+
+def analyze_pattern(killed_rooms, depth=20):
+    if len(killed_rooms) < depth:
+        depth = len(killed_rooms)
+    
+    recent_rooms = killed_rooms[:depth]
+    room_frequency = Counter(recent_rooms)
+    very_recent = recent_rooms[:5] 
+    recent_frequency = Counter(very_recent)
+    patterns = {}
+    for i in range(len(recent_rooms) - 2):
+        pattern = tuple(recent_rooms[i:i+3])
+        patterns[pattern] = patterns.get(pattern, 0) + 1
+    
+    return {
+        'room_frequency': room_frequency,
+        'recent_frequency': recent_frequency,
+        'patterns': patterns,
+        'last_room': recent_rooms[0] if recent_rooms else 1
+    }
+
+def calculate_room_safety_scores(top10_data, top100_data, config):
+    issue_ids, killed_rooms = top10_data
+    rooms_100, kill_counts_100 = top100_data
+    
+    if not killed_rooms or not rooms_100:
+        return {i: 0.5 for i in range(1, 9)} 
+    analysis = analyze_pattern(killed_rooms, config['analysis_depth'])
+    safety_scores = {}
+    
+    for room in range(1, 9):
+        score = 1.0
+        recent_kills = analysis['room_frequency'].get(room, 0)
+        if recent_kills > 0:
+            score -= (recent_kills / len(killed_rooms)) * 0.4
+        very_recent_kills = analysis['recent_frequency'].get(room, 0)
+        if very_recent_kills > 0:
+            score -= (very_recent_kills / 5) * 0.3
+        if room in rooms_100:
+            room_index = rooms_100.index(room)
+            kill_count_100 = kill_counts_100[room_index]
+            score += (1 - kill_count_100 / max(kill_counts_100)) * 0.2
+        else:
+            score += 0.2
+        if analysis['last_room'] == room:
+            score -= 0.5
+        safety_scores[room] = max(0.1, min(1.0, score))
+    
+    return safety_scores
+
+def smart_room_selection(safety_scores, config):
+    min_safe_score = 0.6
+    safe_rooms = {room: score for room, score in safety_scores.items() if score >= min_safe_score}
+    
+    if not safe_rooms:
+        safe_rooms = {max(safety_scores.keys(), key=lambda k: safety_scores[k]): 
+                     max(safety_scores.values())}
+    weighted_choices = []
+    for room, score in safe_rooms.items():
+        weight = score + (random.random() * config['lucky_factor'])
+        weighted_choices.append((room, weight))
+    if random.random() < config['risk_level']:
+        return random.choice([room for room, _ in weighted_choices])
+    else:
+        return max(weighted_choices, key=lambda x: x[1])[0]
+
+def display_analysis_results(safety_scores, selected_room, current_issue):
+    fancy_print("\n" + "="*60, Fore.GREEN, Style.BRIGHT)
+    fancy_print(f"🎯 PHÒNG ĐƯỢC CHỌN: {selected_room} - {ROOM_NAMES[selected_room]}", Fore.GREEN, Style.BRIGHT)
+    fancy_print(f"🤖 ĐỘ TIN CẬY: 85% ", Fore.BLUE, Style.BRIGHT)
+    fancy_print("="*60, Fore.GREEN, Style.BRIGHT)
+def chon_phong_thong_minh(headers, config):
+    fancy_print("🔍 Đang thu thập dữ liệu...", Fore.CYAN)
+    top10_data = get_top10_data(headers)
+    top100_data = get_top100_data(headers)
+    
+    issue_ids, killed_rooms = top10_data
+    
+    if not issue_ids or not killed_rooms:
+        fancy_print("⚠️ Không thể lấy dữ liệu, chọn phòng ngẫu nhiên", Fore.YELLOW)
+        return random.randint(1, 8), 0
+    
+    current_issue = issue_ids[0] + 1
+    
+    fancy_print("📊 Đang phân tích...", Fore.CYAN)
+    safety_scores = calculate_room_safety_scores(top10_data, top100_data, config)
+    selected_room = smart_room_selection(safety_scores, config)
+    display_analysis_results(safety_scores, selected_room, current_issue)
+    try:
+        prediction_data = {
+            'issue': current_issue,
+            'selected_room': selected_room,
+            'safety_scores': safety_scores,
+            'timestamp': dt.now().isoformat()
+        }
+        with open('predictions.json', 'a', encoding='utf-8') as f:
+            f.write(json.dumps(prediction_data, ensure_ascii=False) + '\n')
+    except:
+        pass
+    
+    return selected_room, current_issue
+
+def display_enhanced_stats():
+    stats = load_stats()
+    fancy_print("\n" + "="*50, Fore.BLUE, Style.BRIGHT)
+    fancy_print("📈 THỐNG KÊ TRẬN ĐẤU", Fore.BLUE, Style.BRIGHT)
+    fancy_print("="*50, Fore.BLUE, Style.BRIGHT)
+    
+    win_rate = (stats['wins'] / max(stats['total_games'], 1)) * 100
+    fancy_print(f"🏆 Thắng: {stats['wins']} trận", Fore.GREEN, Style.BRIGHT)
+    fancy_print(f"💀 Thua: {stats['loses']} trận", Fore.RED, Style.BRIGHT)
+    fancy_print(f"🎯 Tổng: {stats['total_games']} trận", Fore.CYAN, Style.BRIGHT)
+    fancy_print(f"📊 Tỷ lệ thắng: {win_rate:.1f}%", Fore.YELLOW, Style.BRIGHT)
+    fancy_print(f"🔥 Chuỗi thắng: {stats['win_streak']} (Max: {stats['max_streak']})", Fore.MAGENTA, Style.BRIGHT)
+    
+    fancy_print("="*50, Fore.BLUE, Style.BRIGHT)
+
+def kiem_tra_kq_nang_cao(headers, ki, bot_chon):
+    fancy_print("\n⏳ Đang chờ kết quả...", Fore.YELLOW)
+    
+    max_wait_time = 300  
+    wait_interval = 10 
+    waited_time = 0
+    
+    while waited_time < max_wait_time:
+        top10_data = get_top10_data(headers)
+        issue_ids, killed_rooms = top10_data
+        
+        if not issue_ids or not killed_rooms:
+            time.sleep(wait_interval)
+            waited_time += wait_interval
+            continue
+        
+        if int(ki) == int(issue_ids[0]):
+            killer_room = killed_rooms[0]
+            result = 'Thắng' if bot_chon != killer_room else 'Thua'
+            fancy_print("\n" + "="*50, Fore.MAGENTA, Style.BRIGHT)
+            fancy_print("🎮 KẾT QUẢ TRẬN ĐẤU", Fore.MAGENTA, Style.BRIGHT)
+            fancy_print("="*50, Fore.MAGENTA, Style.BRIGHT)
+            
+            fancy_print(f"🆔 Kì số: {ki}", Fore.CYAN, Style.BRIGHT)
+            fancy_print(f"💀 Sát thủ chọn: Phòng {killer_room} ({ROOM_NAMES[killer_room]})", Fore.RED, Style.BRIGHT)
+            fancy_print(f"🤖 Bot chọn: Phòng {bot_chon} ({ROOM_NAMES[bot_chon]})", Fore.BLUE, Style.BRIGHT)
+            
+            if result == 'Thắng':
+                fancy_print("🏆 KẾT QUẢ: THẮNG! 🎉", Fore.GREEN, Style.BRIGHT)
+            else:
+                fancy_print("💔 KẾT QUẢ: THUA 😢", Fore.RED, Style.BRIGHT)
+                
+            fancy_print("="*50, Fore.MAGENTA, Style.BRIGHT)
+            stats = load_stats()
+            stats['total_games'] += 1
+            
+            if result == 'Thắng':
+                stats['wins'] += 1
+                stats['win_streak'] += 1
+                stats['max_streak'] = max(stats['max_streak'], stats['win_streak'])
+            else:
+                stats['loses'] += 1
+                stats['win_streak'] = 0
+            
+            save_stats(stats)
+            with open(DATA_FILE, 'a', encoding='utf-8') as f:
+                f.write(f'Kì {ki}: Sát thủ chọn phòng [{killer_room}]: {ROOM_NAMES[killer_room]}, '
+                       f'Bot chọn phòng [{bot_chon}]: {ROOM_NAMES[bot_chon]}, KẾT QUẢ: {result}\n')
+            
+            time.sleep(3)
+            return result
+        dots = "." * ((waited_time // 5) % 4)
+        fancy_print(f"\r⏳ Chờ kết quả{dots:<3} ({waited_time//60:02d}:{waited_time%60:02d})", 
+                   Fore.YELLOW, end='')
+        
+        time.sleep(wait_interval)
+        waited_time += wait_interval
+    
+    fancy_print("\n⚠️ Timeout - Không thể lấy kết quả!", Fore.RED, Style.BRIGHT)
+    return None
 
 def main():
     try:
-        key = deobfuscate_key('PTB3TUVOczhqeXlEMzZVTnYwTUpzUllUV00tZnNZTWc4cVBkTGoycjFfZ2U=')
-        fernet = Fernet(key)
-        encrypted_data = base64.b64decode('Z0FBQUFBQm9XckRrNDdqRXIzX2t3WWE1aUtDVV9rRWVoc21tckp6bHRHSXRSZzJnQ1dvSEdPRDc0ZkFqa1Awa1p6d1dJeGJsTTRoY1VCM3NVMGdjRlNoSk4ycU1DX05mb09QU0lwbS1kaENDc2hMNGhzRUNBWllFR3N2aUFGZjE1amVaZWxIaGpwWmtMT2dZYVFiLTA5OVhBZGlUaUU3ZUdFdTlxbTdnclY1aVhRWXRhMUNHTXRCRGw0cXJnSFZlRzBsMmNUYzMxeGt6MmNxcFR0Tk9NZ19PMDh6SjZXTVlLNXROVTc4NUtHQnRGa0JJeDJQTUJIRW9GcHVleUVzWXhVWmotcGpuMzFxRGZRRHg1ZjBCSGJPM1ljeUZBU0Vrekx3VUVJNjgwdnluNmwyZ0RvdUpuUUw5Uzc3ZW5lYzczekd1cUs3SUNkZ2FONGhrNWdxeDY3WGlhZUZMZUN4VXdNZ1B2cmlDeGQ2MDdaYUVxUV9zS09FREoyVDRzdUV2enF5a3NrcEgyRGpFY1cxdmVQU0JDN3B2SHl3VFFSV2szR0p5ME5sNk5kVkpPSVdJZ3I1ODRGVjdjazZSLXpsX2RhMWNCTUQtWlcydkw5T1BSdzczb0R4U25oTHRGRkRPakFseHRJYkpEc2laMm9aZkV0X1pSY2s2dWlmRGFNaFc0OEtZM2pwTmZJZjdrdENzT25XazVIWERRMVJOa0I0QnpKbklheWt4REJ6MHRJaHRBWG9KejctdFF3SDd5QTVMdlpXd1E3SFRYXzE2dURCYWpCZWthcy1aSXZMTWFENUh4LU52bUtLVlZ5SlBnUVdBSzg5WDNURjdSTlptNVFWUHNDZXJrbFNlNFdhbFF1RmZFeTh6aWtzdXVtQUJPT01UZGF2eFpqeHNvaVBsYV9hZmlScklCekxCYWYzNVZtUnJDclA4dktFNkdNM2V5R3dmcGNrNG80Nng2djh3MlNpMjhoUmFxZ2VvNzZMUm1fSklabTV2aHNxMXZxandXYi1RRHl1QzRUM3g4OVZRaHRoQjNYVVd1bjBJQlR6WjVSSmFPTjRvZXRZdXlpZ2pjWHA1NzNFMlBtVGVkNzRhbVpocll2YjFsMFJocjA1ZGFkUG40NU5BZFQ3d2dkRnpUWHJPeFpNZzRhbk1JZG9hcFFrV0hRZGl0M1NoYlg4aERuX3dDNVFfeFVOaFJ0bVVTZFE4M1ZxcXhERzcxQXp3bmdOYktRQXNQSlJsM0hkci1TRXRrVGtzV1lObW50TWRqdlhYWnpNZmw4dkZpc1E2aE1DMC1Ic2JtMTgtYkNqb19QTGFhUGZvcWZjcjFaVERVT3FqTDJKc3huTEtLTVB4bWpUSVpEU0t6VlB1aDNQbkhLZVJnUEhJcWFLQnM0T2lWdEduRHhMWEFTVjZiTmc4WUVMcTVub0o3WGhZclU4ZzVJOU82b1RLMlpCU25wYzJ2ZVBONTlhQXpwQ05Vd2lwVXRTeExYMldpRnVqdWpDMDk4VHJsSnhnM2dKNkZVUzlpVzFabUxuSFNfMmkzU3FoZmZpU2JoU1hZakdaaHVha2U0U0g5YTJRZVR6OTRISWxBZ2lRVnZQVXpzYi05REExUXhsRWIwSkhPcHU0R1ZXdGVOT2hla1c5U2RzbVE0M2ctdy1rcUxUdVpXZG9obEhjcy1PN3h5NkpVbVZuMFRzZHBaa1U3RHJua3Myd1QtZEstejUzaXJEZGhUcUhRa0FOTDlZUGNlWHBFcGtjaFJDNHFhWnFyYW5Oc2puTnFJcGNMbW00bXljd3JhX2hxREZZVm9nRkVWOGYwampxZXpWWGNvT2hmYTBiejVCenJBbWFHc3Uya1I2SnZIWEc2c2p0MllaRWhLQUk1Qzl1WFppUFM2NEZ5OTZQZXJVQTVMdElDazNaYldQVDRSdGxkeXRfeUZsT2NCTC1ndElSRlZPMEF2cVJOaWVtNHo3aXFvdGJQaWhvZXY2bTgtT3c5TDN5ZkpnWGVtbGdDMG5IbmZpd0NjdnhzZWtsdFFlZXB5QXRUT0pFZERaTUZ1elVyUGJoUzRvZ2pYYmtqWjFqQm80TXUtczBUeXRyU1kwUWdMRnp6aFNvMGM3OWpWclBGcWdGV2owVmRkUEtNRlZ0eUJxcVl5VGszWExuTHNHZXRJMUU3bnRmREd5dmZmdjNWR0JlMFNJbUZqQ3ctaF9xa2VUX3ZZTVZaSGc4ekxlRDIxbkNlQllVVjRyWEllUGZGUGxUeHpKS2VtT2hXZVZuWTRBUDNqbHJuSE5UZjEyRzRadXBJN3plU3JBZkdYNVVqcWRZN0pqN2ZQODhrUGJNak5FUU9pbVY2d3Q0QzhQaDBoLXo5RW5oUFQwMWJZekgwTGhCbWQ2XzIteDdzOEoxb0xGWDZla2ZoS1ppVjNKQzZPdWFZbXhKWFBvX1pmSUtWRWtPS3hHZHFhbkZnSzdqUkNYMG9xVktLOHVnSGxpVjRDbzAtNVVpUXoxOExUcXA2X3ItMG9fYWlfZ1F0V1Vtc3J3dEgxSXA1T1pCckVSN3pENVhXUHBtczRUbjlJZjlHVm9oaWRjWlI0RnFQQVliT2NRNmVZbFlRU2IwM3VqRExGMUxOcm51dmVCeUhtWW5tMUFTeTNwWkNJc29LcEdMTVNVOE90clR4NkNtWFM5NHV6Y2NXRlZKd3lKNzVVVWdac2xsaXV1RnFlc1BDSzVHellCUDZjdFNQU0phNjZaMEVBek5aY3VUVXpFTnBhb2xkNUJiUF9HeWJ6aDhzVUYxWXJreG8tc3N4TUJuZWFJLUVXWE5jdlBQa0FKVTlqd0JLX1FQQ2wyNGZheHAzNzFRYnNkdldkZHVZcDZfQXEwN2xhR1dBMklIWkFzVm1HUl9zNHBWWk5rVHNpcWI3NzVlbU1LS0RzYlR3dUxaclZncWt2WWpVTWs2a1JwZVV6OFlGSmtBVS04Sk9oOXJEWHNzek1CaU1pWlRvcUFlcTlNY0NHZTJnMWxnd3hqMEV5YUI2VDFMQlB4SzZseHJDWDNqSjZXMFY4YWhDWmcxeTk1OGhOWlk5eVNLbjAyWVFKc3Q2ODRUWi1aT1ViT0NNN0cyc3hzUE9QN0h2Q0tpLVNzQ1BUVmMwWVk1YXMzTjNCMWhMczB3WTdOSkF4SjJGMFlJcjVSY2NQbTlxdzlhQ2tRVFJiVzRoQktwV21TMjZPS2RhSzhBYWdLdUZ3UlA5cmgtUWNUeUJRSldGWUgxZGtRa01HWDY2ZDBreWUtdE5hRzk4akJ3bV9iamJ3S0NXMUhYUjk0VEt3bTE5dElJWDE2NktESVdTM0oxbE4xLTFqLWdOX2YzU0U1ZDhpX2N2RmdRNzJHanFoakl6TjExTHU1QjZJOXNJbVRqX085RDA3N0dHRGxGcHVGQm9nRHIyM3lRLTNOdDhjdXhjSVJkZjQxeWdYQlNpd0IxNGJnbkFIVUJUS3N1TzNvMmNyQ1ZZRnlmOXNMVlI0eWw1eHFEWVVXWGctMjVTMnlTRHBGZTdJQzRHYkFLY3gzQ2FRX3cxanZHZDh4alcxLU9fdlN6N2VndEtzcC0xWVFFRDVUNTBtZGlnOEdZMVpNZFJWdks1SW56d2VPM0F5enRGTXlPcUpDUDQwRXVUZzBfeFhvV00xMGhNMUFQcll2UUlMRmRIejNwanhiMGhOQnFlc2plN0JsT1gzMFI3dEpTRExDZXg2dnlwcGdTT3VBOVVQTGRYTURjOXZRV2c4MnAxX3RvY1EtVUFLTFhXdFo4Mkp6Y2dXUXhFWFVlR0J5alRiVzVla09SQzdKcWpzTExWVl9tUG1fYTlrVzBOeC1Hc3pmTk9wRW94emppLS1lLUFKMjZIOW9RR09EdXh1SWtxRkhxTlpnS0ttdDhxRW1sb3puOFh4TFlERG11VkxWOVlzZDJDN1pOVXRRWGpLaGsyZ2RDOF8wNWpldXZhaG1QNUdXb0xFanhIR1ZSb2tHZHhCamhKQklyQ1Z4VXVsRmcxNzFUMFg5NmgtZ0lKVkRzaDBqd21JRHl6ZWtNaXEwT09yZEdVdVpWc28zelR6Q3RRa1lCOWZQT0JGRUVScEhhSVNENC1PUWxQSURxd0dHZ3VfZ2IwT2J1Nzd0TUphcWlweTRIa0E3ZEpJTnB3VXZXZmgyR1ZRUm14WjZzdmVfYkgzU1lsdFFhSWg1LUt2aGtNY1ZSdDFUeTNHOW1wanFfeEpRYlNnOUtEVG9ROGxHWW5Ba0RjOWhXejdyNVhmOXFmMWdLNmhueEVGOFlVcEc0NmhyX2VrSlBVcXJmSXVCZXNyRjM3bExQUllkcDhxWGdGbUx0ZW9xSEdPVi1xdy1MVEVIZHcwTERuWUJHcklPb2JIVXpXdFRIcTJsMC1RVUVKNnUyQ3lSeHFLX3dQN0ZnQURlRzNjb1BZUTF5d3RWZUUtZGg3UFlfcFZ5RzdqMzh1WUR3QUJ0bHlfbG95UkloMGxCa2RNTE9WVUp1Y2Y4ZDRzU0NIMTB1M24wRHBjbVBsMmptYktITWJBLVVsZERTbVlURzVIZkRCT01vcGVNRTlDVWpQTmZjOWNkci1QWGltOUhlWHVsUVZyejI4R3VnOFMxSmdjSWRrd3gwUUF2dllsQXh0Q1U5WTA2U2NkUi1ib2JobW44Qm92aVM4QUtKN2hHXy1vNnZ2cTExZ0hGS2g3S19WTGFDV25TZmJoelY0M2RpNGpoUmpid2M4aGdWaHdxb05Kb1ViY21KT0gxUDFkWTVMYzBQRTg3d1cwN0o5UFJTSzRFTG51bTJFYnNVc0JYTEJ5U2lURkNwOFhmZ0xwRWlQRzd3NjNIWDJXQ2NFc2NGU0I5T1ZSRlJDNldRQ3ZkYm5teHhpeUpIem1FWFVMTDVmWkJiWFBOSjZzYXktZXRaTmlwNjA2d1dvTVVQdVpaa1QzaGV4Q1dqWEo2R1JfNXNtRVRhcmtsNFhVV0FCb09YdWhhbkFwc2dqc3JZOHY5ZHZIVnRKYURtdnBMUHkxQ0FjT1Z0dFpKRG9PR3VKZGNWcmNnQkExWnJBc3VzM0h6clY2VVJOakM3dER0ZHpURE8yYUJXYjdFeHl6NVh4RmVtV2RzeG9Tazh5SzVtVG5YZ0Q0OHFTMTJPYXhIaEd0MHdQcHNrRVdJdFE3MVdQNlphVVdXOUFoRDJwRzR4YnpiYm9mS0RKdkJLN3BrWXcyRE1sQjV0c1VkdWRjQVE4WkRaSld0eF9RR2RwdGlySXc0OEJLdjJ5MlQ4RFBKUmFOVEdxR05EZ0RINndLWTVnSGt3SktMSGdUakdCenJ0aTVXalhmLWJiUklFOHNUMnI5eVdZTWNDRmtzOERtd1BUVUZrb2RpeGZhRjVTbkV6cndPNmxGSHdGQ1duS2cxaWhXeUJ5bm5VN3l3SVpWQm9mU0dJRi1kLXhGTXY1Qm9MU3JiSnhoQTN0bHNZaTdxS1hISXBlNFI0bEdwNHo4YzhMbndhakRXaFdRb29iekYxRkt6dUY1aWdBYjM4SnBRcEx2TFp4MlRzSnN4M0k0Ujc4bW9UVGFyUTlxWFAtQnRaWEpJUjBGU0RUV2dCZ2VLTkxpX2FVUTAtYXB3VjhLT29GTmlTOG54R1pEUGhZaU15UUE3VFpCaUMtSkJRblBOMENyV3dkN1BsVWNBQlFwb1hPdld6MlFwNENaTm1jRG8xNXlkcDE1OTNBbUM4b0dmUzB0aHkzczlQcV81RUk0WU1RV0o0cklzUnBXNXRvUEswaUQxMExrVkE5V0UwWF9zVFQzczdhTHIxdVFFcUlKVUVWc0lIaFByeHZvQjZzYzdmNXVtT0tYdm5ERG9TTHMxXzczWS13c2E5NVkwWVJieHNJQ01PRnA5X29icFVFejRkMDQ1YkU1RnpBUVNpNU8tUHRyaVFtR25fOG92M2RVRVQ0MW51emJNMVhZT2d4NFZBdFRLSVdxZ1RYeTFIZ2V1UnA5MEQ0THRLaTBWa3QxWHdGNW02Q01RMDBKTVNxVl93TXRzVGhJNXpiVGtONjd2VE5hTFkzZTlGQTQ4ZHhrWFpsQW00WERNdy1kOVo5SlhmbFhhbkZLbk1FeG5EVEJpbUM3YXg0dTdKd3lwN0F0R1JsYWJDRHFOTmszX21FZUlYdnIyb0pnZ0JUSkl3SFU5WExaQ0k3dEctNlVwRXY4SHdMbWZiTVJ1QlEydFN3VFNBbmptQVl0Q3Fia0dPX3RFV09lQWE2V05YRzVFQTZuc3plZ2VRZmt4RXl1WFRQcUNyQkRaelQxQldWTC1wcU50S21kS0ZTZ29UN1NJbWV3ekZlQml0bHlMMF9obUtndmFTdGpDSlNCTHhEMHk2OFZXUzByeEFHX0JBdW54WWdkMHQ0Vi1RSlFzZTVwV0I2MTIybE5aTk1VSDBvLUVCZkpLOThhQXhaN2M1ai0yVXlCakNDZEFSWlllMTlQVlNxMVJQb0w1TnNLRTV5UHJTME03LXBoOVRVRVZrbVY3bmE1SHhUZ2VwaUdNTzQ0SDhUZTV0bHhNelBoR2pJa1BMOXlEeHRmM285RHJ5cVZUZS1tYThmYTRzMmQ5MzZ2QnpNLUZHWTlEMkZmUHAtbVlZbHZ4SUNnV1Z0eTljLXl2ZG5kR2k4azhWMldQLVpwWXN3dEVNS3hXVzMzSHFyUE8xem85NXRtTGh1aGN6VkpNU1JqZTlNeURWelRxT0RJTWxuUE5pY0VFWjJ1ZWtNNlU0N1pIbl9pQWdsQ2hoa0p1NkVic0RPWFJoTkNUYVIwSjNKZGRHb0x2b0NWWUhCY0JnaWRPTWtVeVlzSTRlaDV0SDBhTENZVVZuRWtDUlVsSU43Y0lEc2FlakNPb1Mwb1ZtRklRSVNhNk8xeVRGWkJjYno2RTlyZjdhRkVLbHRSV1NfdHNGRTVDM0RudVJxTUxfTk5ZejVLcEQ3Ukp6bjVyX3dwOVpRa1ROLUdJOUk5ZVJYM2hTV3NPS2VaRTZBdVp4TWVnWFZ2c3F0QVBCekxxenlJd3prRlFQWmVuV2kwM3l0R2V3MzZCSGZwQkhTYTlneW5lWU5nQWtoWmlrOEVmR1U5MzVsUEwzOGJkd1RoSW9IMjFxUmxiNWx5ODVZb1l2bEZPajMwY2MyVnJpTmpsQlhTVXpZX1BwMEh3Yy1zT3pEX3k1OWZTY0h3eWl4OHpkQnZ4Y1RTSGRNRE1NRmVoN051aTg5WjZkSVRoZlJPMnVsUkI3cFZwN0NQQ2ZyVWFXaS1ENG95ZHF0Tm9LZWh0YVU5ZnVZVE5EbHdNRHllbWhMb3F3V0lYLWZ1ME56VFFqQVNpQXlhaXBaZGlVQUZsQUg0R2d6V0VxV2hjRV93bFJJcDIwZmFHeUNhWVdpcVplN25DblhwS2I4ck5KWUJEN25IMlRhWUtURU5yUnJNR0UydHJfTWFzVEFQcTJDWlV3UU4wUWFObWN6NUswUXJGNVFkVURXNGh0SWliMHRVMnVGWnEtQl9POE5YbXBMQ3duaV9pYkhwbXg0cGV1aFlqZ3MwUFNweEYzMjRqUlFFd1NEa2MxR2k1NmZXR2xtZUpKTjhiSFF5UEZZa0tSV1pnMTBhZ3RCRlUtaVNGQWREN0poUVZYUEZJdnNWam92T2xVZk05T0cxN1g4X0NLY2R4OUYtb1d1Y19ZTTZxLU9NMnU1SnFKa3pnbFcyLVp3N2JwR2JHeUN6WkdWSENJVWh0WjB4cFF6Q2JNeW9SalBiTmJCbjRnUGZIamtFM053ajJBZ0M5VE9HWUVnd3JlNHhHZ0VYU3JzT0hwd3V1WDM2MEZyYno3elM1Z2c1RUlTNXAxMDNDdERZM0pCVjJaaWhhbzZkSTUyTzNkQVVFaTB3VE9TdXFWb0tqRWY3M1hvbEt0b1VKTzd3NVBScklXZUVlbnR4WGhzUWJUNHN1MjVLeVdPQXE1dHRjX2tLanZkTGJTVUl6aHd5NFk5emYxekdPZ3g2MjZqalVQMHFEdXprbmlXRU54VnhuaEhRUlNXNFhmVHdJOGZtejh1Y0p6RTJpcU15MndZaXAyeGhnZ21xNnZzOENteFVlV1RpZ3IwSnBITmdsbS1CS1F1c0IzR0tYT3NWU0FySDZ2STZEZU9sQ3hPaVV2SDBpSG1mSU9fZDkxUk9wZ2kxNGdic0lZSzRBNGZXNG1tQU42Yjc5eFI4aGNDVHh5QkxxWmRoYWVOYlpobGtXcDVBOTdITjhGNlF3c2dONnYxMnNyTGlTdnJoQ2ZiTGY0dklUMkpCSzdCcXZoWEdvTkhaNFc1M09KdTJzc2xGY25scWc1Vjh1RVAwaWRrUFZaRHM5VWd1b1dKUV9MNXNMeThIcGgwbjEtdDZqQlhzVmZCdU13ZG1BWUEtNV9iVDlWZU91Rkw2VHRDRF9xX1pPalFnVUNqMkxNQzBZYzNOYlBCUGwzdVVxTi1MRDZjQkNkZUVhYVd2aUJvb2hqX0d6RzVxV0tfSjl1cmg5UHVHMUM0Q2M5d3Y3OFFrcmdtUUkySGdRdkFVR0Z6a2Vxc1JjV1dwbkJuUzVyVnNFd2E5M3Jyay1tNEo2RHNldUN5YW1IOWdQbk12dWh1QzRsNmpIOUNaZXRzNkgwcnRwY0FrMjFaVERqMFNlUnJfRjktbnUwM3BFaFhURHJnMlFuWjB1b19kU04xMkx3V3V1YzN1ejBUTW1jTTBveEpITTB0TjFMbkQxUERDcTN1WWlPazV6ZUZNbU5fSzlLRHlqVFB6ekxWWUNYbVBDQ3RKV1VYc3pGRmxEMFNoMjlQbUhNU0d4eXF2VkJOb0NadXhOQXV4NTBxSzAwWHRNckU4S0d0bEM2T1UtUkRVY0FMNHdpazkwOGI4OUt0M1loRVpDUVJOS211cXJjZDdvUFZMRkJCY20wMTR4STZyVHllWWljYmZ0X0ttQnMtZy04U2xfVWxRbE15WkFrMzBzX0NxRWJlVWlXekJpRlpaaGMwNnFucWFONk1RWFhJLWQ0ZndJV0U3RzBCNFVOaFBOMXlnQ1JKLWVqWWVObG5lLUlFUjZ6dGdvdVgyZS0zMEpZQzluMkRFeGlwd2F4Y29lTVprY2lJNzRaRzh6S3NEQ3BkQ3F6ZU1MY3Z0bV9aNnVpZlZpY05WUmlTQV9pcHQ0U3o5QTZ1MEwxNDlsWlI1OVlsc3RGelRCMFNGbklQd0FocHcyaVZuMi1rLTRkdG9hTEtMNnp0V3hLMTE5QWlUYmZneXF4RVc1T1NMMjQ4WUFIZDlQRThidFhCNTNrNHBDU2QyQThWQXBFSHNMNHRpR3NiYUxvSldzYVBhU05KMmFKVkJUU2ZOc2JTVl9uaGhhVnNDdkJQN29KM3BBa2JkckZPM1BISnlyZFlpaFFOemZ6RGk2VUo5LVpLV0xjSVhHMUF1UGhuN2U0VGVCR1RyMi1IUW8zLWFzcUQtVTNuSFFSWTV2b2ttU2dSd3o0bkRrenY5TTctY282ekRMcnY5cUNNU2puWGphSHRMbk1FclFhSzVRMEhVd0hiYV9aVzhlTmF0ZWxCblY1bzYzWlJHRlRYUnNPSXlKdEllSGd0ajJpa2ZsTlluSnVCV204OFJCSUtKR3dzY0Uyb3oxUGhKN3pVR0VCWnROTVZDb1VwMWNBSXV1ODdUdDJpSU1nVnNFY0VrQld1ejdwcktMOFFWcldlUUF6eWV0MlFfbzl6VTN5RGh2Nm81NkE3N0wydkJ4V0RhNkFIZlE2NGJMVTlmT2ZDcHFXU2FZN1dNaFcxZHR6ZGZqWWZRSDNFS1oweXczMThMN1hxeVRDdkNWVzVSc3lsdG43TlY5LWdTd0xXOC1TSDlwbk4xUGhGaHl5VF9ySnI0ZE1OUVhUN1REdnI3VVZsVUl1Z2dMOHBjOU0ybVFPaFBXaF9jQkhGZ3RUcVAyUUlaZGdpbmtGMGtYbUlxdUdjQkdLV1dYb3pYUkl4R08wMm1Ud0lic3JTbHktY243d1kzcDBfejhOeno0UDBaVVY3SmtRREc2V25MYjVzcHhYbVVueFJMd3ZZcXJ4cVFLR2lGaTl6WkMzak1veXAxbjNGMXFRZWMtOU9BUElYRGlGTHp2cGdReW5IVHhIV3FrM3ZVMFhYWVlua3UwaVE1OHQ0SUs2YlJQS3pKYjJwRGgxTnd6SjdBbDV2M2xfVWQycVdzM3lYU1cwOVpqN2ZNSzhnNTN0RTJBb0U5UlRfT3gyRnU0bWFOVnU0eFc2N3ctdk9hVjN5aEk1ODJvdlNud0YzdUN4empJRFladGw0SUpVQ3JjTVZVc1ducXRtd0NRZUNBRi12ZWZ4NHZRdGlnTzhiU0pLaFdYcW1sUGI4SW5ZaEF4TUIzYjFfWkd1aXdPT0paSzF3NlR1bjhIMmszYlAyX3A1eWJJUGNveHZUd1pFWms3ZkRaVXIzYURSLUZuekNqUmNvZFRCWjlySndqaVByMUVGb1lUNTZfYVJpcUpZQmVRZUt3eFlSNnR3OUx4VXJKQ2JNSldTUU9KcjBhV2tIZjRkOFNwVDV5d0pqR1NtYk1sQVdYVG1NREFjZlB5YUExbmwzdHg4aWFwZ3RkQTJpeEhCRUx4LTlOdUxZYzFtaWYwazFYLUV1TXdqYk1FMjYwWlpfSTVZOTJyMU15Nkx1a3hLZERjTDlQNUdnRzB2S0pFVXhVc1oxOWhPWm91YlZadFlqWFQ1SDZRSnpndW1tN1A4ZGdyZGU5Rm03b0Q2LU5uWExYSWtRUkJZN2JwNFRSV1ZienhwS05LNEFNR2pGYS1semtpeGlUMnpueVNJSGd3VWNpdFJyUDN2SXZmbFh1ZktDbGhHSDZyeDlnS1VvVW5sR1BVSmhWazVhZDBWR19jMV9TWFE5X202X3Z0NVpCQUFKY2NiekdzRG50QlIzZHgwenl0RFdaekFWamw4YUkzMEZIUnVOOEpKWDEwc3hBTk5JZUJwbmhPTjZSa3lnWkVVTFBUR1N4R1RMbmVPLVRQMVFKNENZMzZmNVZnNy1NQ2ZRY3pWUXQzQ1VJTHBPRnZuSVBpMnUweFUwUFRwYjhkNHRRYnlmUDk3UktxbTFJSzVpUXo1OUxNbG9iUVJidHdxcFdYT1B4bnRYLVVxSmVaYjV0a3BISy1yR1ZhUXlleEQ3MkJtR0NjM2h0eElqeUF2UE80WDhNdVZkdkRoQWpvSWtQQjhyWGY4YUNnajlSY3RkNER3Q2xlOFQ0OTN1bkZQVHpKMTBRVGUzaFlNYTRFWDVUUHBmMVVfOU5Ddl96RlRleU9LVllVajgzQTNkNXFYSDZHQmlsVEZtNmVkOFkzNkhLaTZXc094QndhaUtLZjFabVdZOVlfS0syemVZNGY1TElYenQ3dTFOZndQZEt6NnhmOXZ5WXhMdTI5SWI2bXFLYUIwV0ZDNENuNDF6SEIwUE5DX29nb0hHS193WGVPalE3dmlHajNDU0VUbkFVZUJQVGNXcHRwZEZua1FoeWFYUFYtTjBSTjZGdlNyNl9zT2hUcEJLQ0M1YUNYUDdvcDJyNVRmODdZR3BjLU84a2ktbU4xVE45Sm5MX1I4WjJQNnUwXzdqT3d1REZhSVRjaFFCR0xOSEJqMUJ1REhSMDVwd1U2YzlGQWluNmxJSXRFRkNZVXg5MUk4M011RUpZYi12QUo5M1VPMXpwZHZEX1g5RWpaUm5WZFVIMEtBUHRibzlKTjJWcFZkc1BTSkFrbDkxNHNqVXJlWTRYdlFtUGdNeXJvelZQRmJVYld5OC1tMDNCTkZFQWdSc3VwU1dramtEQ2kteVVJSVhjTUhtdWp2RVktUERqTzVfYmlhMUs2VUNYcER5dUpwUnAtdDM3Tm44U25mbHBkOTg0N3htNG9feG1IU0RPYzNhMHhtQ28ySVNZbzlHaEpHVENPS05kX01zNG1lOUlaLTU2OFZLWGZ4Vzg3SHpURWl0SnJHd0NlNXJsVGNyeVpoVm9RR21saFktUHQ0YldIeElnSEc2d2FZSnFyUkh0NkYya3BRcTVZX1hRUkxDUGJqRjkxWWVWT0lkdmExZUFpQlBrNWxPNkJWcm93MXpOdmg5aDZzZkFGY1h5eVQ3S0FLb2hhQ3BSQWl1d19ZekZrVGFuUUFURU5hTnRaM3JkUVpqZ25rVUFoenlvU240NDg5V3JDY0hPSHJSTktkMU9lbHFtWWFRRC1ZSGdOemxIM1hvb0JoM2xJc3ZxTzVtT3FTNnpTQ3F5VFBJUFkxeGlWZ3Q2bElLdDdIb1hwWkVaSHl5UllyUVNrREdQNkFrdlZjS215bUNZZGg3X0swVl9GSXotZ1J0azF0WGoxdENJVmU1bl8yXzJTUFNSNE5MbGNfeXBLUWdaWkktMS1nbVlFby1zV0ZFUzBzeDhjMGVEaEY2TnU3VXdnMTBHZ2dndGxiUU5fSVlhM1VGN01lLUN1bkpoQ0VVYWo2dS1LOTZkVHdJYVlLVzBGNXhNQzBjWTRhWXJ4dV81UlRsRXBkNlVmYXFYR1RjcTRlYXp1dFkyZ1ZqNElCWXV3QnY1MlEwY1dFakV1OXRKRGRsaHNpU2xmVzVGdDA4LXBiY3dPWngzeXhRYnpZdWdiR0M5VjZxWS1UV2plamtiV21qRUVyV0RrU3FHc3FYS0U4YXpxcVlDcjlXZFZlYkpsZHlyY3ppbDhIREQwa1RFSmVQTlNsX0lDTE1TT2FQbUFoUWVKbElaQ2lGS21pWEs2blhxNmRCMzZjXzdDaFNsanM4dXJxdlZYU1dYdFFSaUVnd0xidS1jYV8tTHpLQ0RZQjNYaTYya2o0N2lNaEl4UmFFMUJUM0NZd18wZDJaeFhkZjl5ODJIRERKaGs3ZUZITW83LW5fOFVRc1RzZTJtVFhjckNUTlNVSE9meU1BTUxMWktRSmdHa2NkaXhsckdRcU43LWJMaDBmTW83VDNPdWZNODRTRllDNGdVZHhtSFVmTzR3d21fRDk1T0VpRFd0R0tXaEVlV0N1QUd4Yjc3ZnJGMUM0NzJVVnNnNnZITHBxQUlIaUxDRGtIRW9ibFVtdVJTN0JYT2d6dmYxdXltZEpXVmFtMktFVXhWTVBScjFTYzF0SFFaZ0hEdnRSOWhVWnRWYXRPdnpsVnp3WG1DRC1LRzcteFE2dmJENEFya3RZcGNNdGZQQlF3VDJWRGRsUUJGVTRuSkJINlVVZkU0VHM1cWNLOUwzRjVIYXVZY3cwYlVGS09ORnlydndqTzFaZG9zcFRET0Z1SzlhZTd5VVZCN1hGenI5Wmx6NFpRSS1GY0RBRENUWWlHczBhQ2I5aWZoaExCTzVTXzdDMW9KUFNTVTZUd21JS0U0elBWSWs0Sk5TQS1yendaUjVBRVFuZDkyaXliNDFYY01TZkVZVzVOeng3dXF3WkxqcWtsU0lZZ3NSV2kySDVQN2lwX1FnUEhycnpGZEFFamZ6LWJNdzB0OXVUTTFUUmdkRHJiUjRaTUI0bTRzR2dGQnp6aXZxTU5zS19lQndqVVN1Y2xIbVZEdlQ1dGM2WndOemk1YU53TGIwNTVnTHY2bmJINkNXakVBd0wtWWN1UnJ5RDU4WUE0YXVKUUdsYmdlQmhXanRzRGdQMXhtcGxyUEpmNGxuUFFOSERGcFJ6by1MYU1BWndIU3VxUi1oQS1uY2NCak91VWdyQjVaeWVBU3Z2SkNTOWhZejNfTU45cUJnMEI1a25rSXNadDZhYkMwcE9ZTjBQUm55c3otUUlrSzhhb013czlMQlN0M2VMaWtjS1RhekJjYW51ZTlFbmZxazZjbjVQeEFiR0xfaWk2Yng0TjY4c2NySERPU0dzbGxJdEpOeDlKN0FEd19KaXdpY01hMmVSWk4xSnZBdTZ4TmVBX2xkUk1hallWWU5idVYyd3NEcTdjLVpmZXB5SVVFTWlqbmxrb3A2Um9JckhhYmd2WF9jV3VIRjFsTC1yaWZmQnNERlR6TkNHM3dnN0xLRDdvdmFFa0dPUVc0NXZabC1neW54X0NSdWxIUmZlUlotelFWRmlFT0o0aFFPUFZMZko1a3AzWkhxZGtMQUpnMDdfSHVjR09PSDU5N2NrT0V3aS1KaUx4RDgzX28wYkVvQ0FLRjVjYzhhQ0hmWmhERTBlOFNEUlBTaHZGUzFYME1Ba3lveGczcGhnVHduaFQwdkc5OEFqUC1XTVIyZmpON28xNWoyLTY3RW94NXltOTQ2M3g4SGJSOFhxYnYzQ1BmemdBWUpJaEYwUUhHUzJpY0hmQ0lzQXdfSmxqQ1B0U1YzWWRfcW5EazBpX3ZpTjJjcDFvN2hJZENOa2RZdXpuc2VyYTVJaUlGUHh5QW5PMmNlbHV5MWJMSjBuaDJuLXpRNzh6cTI3d0FmN0pCckFLQVlJUGZKYWg1N19mZGVFcUlXY3BPS0tpelAzbFFwLVRpN09lOHEwN0IwZHFYckx4dVB4a2J5dnhzRU1mbEV6RzU2ZlhCQjB5c0hlcVBpektiNFRpQVpvRVBfOHJWMUlKN3VUcUNHQTNYOG9yck0wZTJCWHAzMEdQbnlYQjM3TEJ5aTl6Ujk5QnZDUjZfLVczUnFLSTZjMktteVlJclZldGxWcGZ0T29GaXQ0MkpDei13aFNBeDN3VWIwMjdfXy1TZExoZkxYYXBsdEtVeVg2TjhrVHIzMmxMUDZ0S2VGNWJ5Vno3MG5jaDRORGFveU9kOXJzd0pnY0hHVEJaY2NnX1N2THNzUkFnY0I5UWtobGdEOHlEcUJQOUNydGsxVWtVMEpjYnludjFSNDQ3TTZwX1pPYmZQdmlvQTc3Q3d1c3U4NTI2YzAzSE9yQ2dLeXpBMF9zYndKdTdOSHBqb0tBWW01SVprQ1Qyal9qaWdmZ3lHdGN6bmxremlNX2lFUnJsOUxtQlEyNmFLeVV6OVlyeDAtYjhzN0xEamU2UnFIYjBna0VFTUU0Tkk2Um83MnZiTzl4U3paM2IxMjJNUjdOVzlCeVhUMmdDUkJTREFXcGF5WGVaSUZkejVvS0JTSHlHZEQyNGJZLXRONGNvWURXWWZ3REtldXJ2OHg5Ql8zUENVbF9kZXNXelBOTFpfa2tEejdOM2kwLS00alNKa2xJdklqS1NrS0l0TUZtMUVqQnJObXg2UG1iem85dU1jTTZoMlRwSENILXZGZzBMVWJDNHRtdUdjeVdDQWxQQ1UwVWV5VGpnNnF1MWlva2hQeFM2RVhqUnhpVW5UdDBWb3FYUzJQclVhOUI5V0ZsbkplTEsxaTl1dTg5UklhLXEwVnVrcWFLcHFmdE1WWFNnY1JMOFJkUFhyZk1OY3BocUZrbERhcFJjZVFiNGZadDRlaEppMFZzSWwyandhMlFUT2I4cjRNcDFtd3hsMmpqQU11ckZGM0U2cE9xbzZsR1ZVNGxpdTByWVZHeVZOb2VHZ1VIM1Q2MU9DbUpScTU3S1c3Qnl2S2I5dHJPMGJXY214eENLRDNwdHV6ZnY4YUE4Y2VzVmh2VnFuRTBDX3ZieFkxdVNvZTNLcHRaSHRpWlA0TXNKcVpQcF9KX0Rhem01UmJaRWMxTTU0aG1DdHZsMDQxTGtzZG9aQjBDUENncUhPcFFYWmdhVldVeWVsYlp1ODM4cVVkN0ZDalZpNklHeTUtMl9MVzVKdWZzZmFPS2k4cXFYRVRTZ0p4Vjd4aFN5RVJZNlgtSVdMVk5HTWNkeDR2dDNBcWF5R0hLTjZKN0gzbGtGOFQxa25QY2tUUlA3VFdYSzg3T1lJVVYwcFlUa09OLTRFcGR3TjlKRHR3aHM4T0VqekJhZmRscUhIenAyT2UwVUJXS1ZoSHU4aXJzRlJCRzQtTkNZYjVmRVVpVTNHQTJPeDV6UmRLVFZqNWVHWmhfdVZiQWdxZ3IwbkFvYUlIbjI2amhULTlOTkkwQlNJaU82ZENuNEtBM0wxeWZiX09RSVo5RXVKRkgzQ1ppVlRYeXZ5ZEUxcjF2aGtrWm0zRW9adkYtMnV1VTc0QjJZamFrbWhkRDlwZmVmei1CaUZvOUYzaHZDaUxTU0xXcnc5YXhQV0xlMVMteVA2c25ud2w5YlRTSFRSTHhmMm9DWnJRVk15dk5sUkFxXzM5VzFiY0tQVUNxWWt1b3U4VUJqbWpZMlNmeVNJMF91c0JkT1duQWQ2WkV5RzMxLWpmWUlacGUzbk5vUzM3S0t0cUozSjh4cW1TR0MtWWdieHFqR3FIWVVnZF9zVmZjR3JaLTVoMUdWdGE3emNBeUhDeFhoRm5ES3N4M2dFd3oxNEhNUnFoRTF6MEF2blNtTVNEcmt0V3d2WDdyMnc3ei10NG83b0Y5T0JYN3oyWFlBOTVyclg3cWZ5RU1iblFOTEVPUW1rc2doekVDS2p2d1d4MXFfWUhHY2VPZlhnVkxrYldpdHpXT1Y5ckdGQnhZUUR3Ung1RlFvbXVTeERiWXM5OU5vTjNvQUxRMWNySDM3SG1Xa0pWRmlvd09rOGhBS1h6QVlXcV9IMkQ4cFlLZ0s2NTFvV1h6dzdkV1lPbWRTSm5SdDJEWUxCYlB3b0pqVk9fa3pab1plOUNJY24tRUpXOWZmcEphdXV0V21IUC1lZ0hYY0R0amFYZnpKd19JRXBERkl4OFpSLVBlV3FMajRVRWpPbjlHZGdtOVJIRWhtT0dyVXl1TWR5QXZkOW1IZ2d5ZjNXekpVWlU2RWNMeDhIcS1qdFhBUmxETk1NejVFcnN5SkRyRjE1LW5vUVJVMUV4SkRoM2lXUU5wWTZDbkVTcG5JMVZ4eEJDbTNCeHlES1hfRFBKa045dTRWWVdDam9vcWtZaFJ6M1ZxdG84SXNEWlM5QjF1bnhHdGd3dVlpai1CRkRqSWtzVmJld3VpenhWUDBEY3FYQU1qcE1RNjlCUExQR2wtNlg5QkhIc2QwQnl5ZE1NdUhFenZSTW83R1NtOHpjQUdtRDRCWFI3MXBEMVBzU3lrYU1haTR0dS1NR0hfRHp5SlRIcHRBVnViQjRQemNEX1A0RzdIY1AyM3k2OHJmbHFjSk9NSXJVeDVManZXM1hzMjZWUkNHR0taSUZWV2pETWhVaUJJS3pOY2k5MG1TU1MzZmVZc3NyVTlEWVI2aDE2VFNvT0h3UGs1UG5TVXpDN2l5UWl0S0xjWGJIdXE2VkZwQWwzNno1VGxRRXBsQWFFVzIwQUVOa2QweXhNUHdPQWUyT3BmTW1TZVFtWXB0ME90RXV3WkVvYkQxRlppTmFYREkxcVg3U2taTk9WdE9LSDlJc1UyVDRJVExKVkU0UGx1amV2bndnM2YwekhyT0syNmFkZk40eDFGWHNIYXZ6NWZ1YS1hUG01NU1pdzl6c1I0cVNsREtteHRPZVJMeWNLQVZjWVRqNzNMek0yX1RrcF9xeFJOdm9wZ2I0NVdvX19YTW83MHR3Nl9WYU1UcWJOcXdYNDVDUnRWblFvTHhMcVdxdTRIRkxwSWE4ZHU2b21VeWIyWC12ZnFZYnlfWF9ibUNpcjByMWZfeXhhdWZHMDRST2ZOVEY5YTJmQlNURVEyRFk2RmtyUkhaN3hiRjNVUFR3SjBPcFctRHNmNl92R01KT0tqNE9QZDVqMnRPSmdma2lVcDRZVW13bmRvRVJOcWowOGVYLXVKZUxqOUtEWUpYOVQtdTZvTVVSZ0k4TlBhWmhNRVFMa0VfNEc2SWpwc2FIYy1pSW1hLWk5YzUtNW1meTlOVW9BbjZMZmNOdUVOUjd0N01ieWVaSHZfbUJCZXJLTmRWdHBHY3BSS1NiY1RuY0Z1UDFvMWg0NG1MWnRSUWIxSHNBWk5uVVAxMnlyTFhlOENwemhkWU1aNHg1ck1oOTBBUjdhVXdZTTJVTEFSWUU0aXU2VW0xMEF0a0ROb0V2Qm1DbXVCVE1FSU1PamctN240NjVUUDROc2tZMDhSV0w5emRUX0RMMExpUVdDTk9EakRCLXJaNkwxX05meUNHSlJ3MEJxU1p0aVFXMHhKd1d5ODBYSVpvMjV5MzdVb0NmNmx0MmVqNFZ0WDRzYWQ1bkw5X2UxdjdiMEhhMzJYMnBwb19PVWFaSlRyb1BTVXdFcWdVczlYQ0JBV21nSXJqRGNrcWFaaDdBV2JaWjluZHFHT1BaQ05aUFFPTlBMcDVVM2x5M1VzZHFwOXJLZ1VuZlFoTklyeWxMQ3BMVkFLeUJGUC0yZ3VFNnpxdGtoU1pDYVh1NTVUbXBRZTFWcnlCV3dESEtuWDhBN2o0VWozc1NPRkJuRVJ6YTVOV0NXVWFUclcwcnNBUGJHTjdHdGROWS1PbkcwYTFVTlNqUG9XU0o2YXZ2bFExTENSRXFHNk16N2RQSlJwN1Fkc0xpTVh0NEdZZnNJQXdoVVZESDVGdTJLMXVkbHhBV1NZckxPMmRpWkJySjVwYzFUOEN6azdiWlhVd3BnVDhmUDREVjZVX095ckRSU3VMaHpQbGdsVXJIcWd6Sy1hT1ZDeHBmWHlEX05FUDhXbUFGOVRQLThfSlo4U1huTTkybU03d3ZuWV9DS2x3dDFMUXdwYXJCMWZsOTJoMm8wbUJUd2RNWFZDbjNBNUg3dnhTMG1EWmoyM1RoRVBTM3dUd0ZzWHNLaDAxT0hHeXo1ZV9IR0NEVTJaTGpEREwzSE41bzNkR2lPWE1DeTR0dl85Z1ZWZ0lpeUZ1VkxhUnFpb3FvcTVTdktOVk1HVFdCWVZjbHNUeHVScnR1ZWl0NFBadmRwRHotaU81aF9wb29EMVdkTy14MVUyNFphZUU3d0daa1dydlJzT0JGNVZmWVoydzVGczBGaWV6RU5kNV9HdHFzeHNLYkRhbmF6X2dZSzBsQUE3QzlHOTluOGZQd2o4MElhZjE4ejhkTm42anR5Zi1QblN4OWV4VXppNk5IWkxjb1hzLUpUMXZsakJLeUdfZElFQVdCOU1wOHpjMm1xMEFmREV3Tm52R3ZJbnNGVWZFdlVJd2FqbXktdER3NE8tUGd2aUx0eEdBVnJVYjliSmlMclJId0tiVFFLWWUtZWt4WFBLZFR4ZUpzdE9PNWdncG4weWQzbnEwTjhHb0JhWk1Bc056Nkw1eW1qT05ROUFJSHR0UGVmQ2JZSEVvSF9GeEVPcUo1eXIyMUxLcnBqTzhLYlJ1V2hDZWhCbi1OR0VhSXpsQW1HTGVwVDk1ODFSZ0NaWUlGRGhUTGs3aXBxQUU5bXhsWHZtRGdKaGVmRHMwQ1J1WTNXcmlEYWhzc1lNX2E0QVFSWTB6S2Q2NmRhZGdtajNLS2l3Z3JFTlFkeE1RblI0X3FMdFVnQUc1eE11Y3hQUTgwQUMxZ3gydmhhNmJ2ZE4tQkUyOVc5Rlg0cHlzeTNDVUFGblpuWjJSUy1vN3NuUU9aa0VfSG5FOTVwVW5mUnpaZFhiWW5uSUdLZ1pnbVhqMzJiRmtRT1VkTW5sOFZhczlNSUd4WExfRXNOMDBSb2txSFctcVBUZUpJOGxTNWlfQmU2OUNxN3B3bURpa1FzTzNaYW5sR0FnTHFhOWo1Z0FNN2pFbGxrYk5vS0JfMlU1MUw3LTllMUxESk9DZ3Fobjl6cERUWURha3hkWW9MTEdoa1lsUmFmMHEtbl9yQ3dDMEV2ekppY1lrSkkyY2lERm5JQk5mYkwwZGZPOG9hbm9oZTQ0MWdZZWF6UE9velR5YUhzR042UlRDM0RZTVJtaVdtOHNERDl6N3dRUHRlWlZ3Rk9ZRjB6ZG1VWjFCN01RNHR1R3BVTE81amxWdDdOdnlOR29HUVFMeFJIYWZNWS1hLVc2OC1JbmJlNU9WNFlLOHMtNE9xUzNZaHg4OTc2cnlZSi1Kd2xoRU9LNE40eGZQYVVHUVdxdXA3aDMtbGx6Znk3bzlUNF9mOGNBSXJ6YTVUb1UyRmIyUkUzdXZoZlc1Y1ptRkJLd2tBTXVZTG9JaWVydXFCNnFHUHNOQngtcXZMZVdHVjRzU0dCNlFZNXE5cWp6enpaOEQyaldueTNua3o3ZjQ1SHpMcXJoMnVkZko1dk8zOElERHZJOGFTNmZGSjVRVWJ5dlM5N2dILWx4Q1gyWGhPclc2aHNRZFhZY3JEWDRwN3NQY20yVXlpM3RXLWljWXlBdTBKUDlyb2RKRk0ydkh3SVlfeTM5NnFnQ1dHcjVkejlZbllZa09hRnJ6X1J5Ukp6SDZGRGxTUnVDVlkteUFBQ0k2T1gwTGhUa3BNYlBMb3hVSkU0THRVMkZJalpBRTJXX3RWX0MzSE9MUzZFNDlpRi1zaWxBNEYwS3pzZW1IR0ozOE52aW41cjVoSVBnWGxrTUdYM3czd0stV2NOYldQVXhQSy1ra2w2WmZPR1lMQkk3NXhtRDNfM0g3akJYVGctNmN6NEVWMjlDc1hVa1FqYkRVbTNYNXRkMXMxNjVtVTNrY0RaeWx5OVRhUi1ERXpEU1A4LUNYZmk2UlZVNG9idkJYdDdWd1NhX0J2X1lfYkN1MHh2bWhIZ2JoXzlONjA5VGVlU0pBVnJOTVd5NVN5cDBJRVVZSTN2MHM3c2ZVMm4tbFExMjZKeGlvMzRuZ3dFMGJEaVpoSzJkQUxCaDVCM0libXFqSDdoN0dMZFZwZU1ycFJEV3Y1NUNwb1BpZUxVZDRuSnJlbGg2bkRiVGR4cGpWNUN6YjhpOUVRLXNvTU9ZNGNVSzl2dXFXRDBvcE9kWW9COUhYbTljei1mQ1dISUJBZ0x1QXVScUNrMmZMcGtFcVgyOHI5VjhTTHBHNERKUlM5dlFacVNhSlV3ZHVnOGtiRWhkZEdHT0JOckpoWGcwMnpjdUI4Q1R0VXV6ek01dFAwOEpJV0pONGJLcVloX0pDRmJlUldWQWtzaXdnMi1YUndmSXBQeDdMYm8tUmRuYmRiZXlnenh6SVg1d0ZSVkxVN2d2bTB3WEUzRV9Fc2FZOGVncXFhcnlqVkc5dVpiYXV5YjRsNElzZHBmQTVRczloMnMtWElhUHNLQnptbHI3U1Q5c094QVVKU1c3OVpnamFkZV8tRUhfbTJhZko4NGk2dEhGejRKQkNiY3BodDNCbTF5cEVhZlAyQldmYkx5R0JxSjdEUlRqNFJHQUw4VndPeFZsdEhaZFh3cFZ3M3JKdWRRLS1qTTU5SC1CQms0OWVER0JHOGJVc082cWZaVkdhZFJmNlhhVGZRWVhwX214aDNvMFRDTDJCcnQ3eDhuN2RvX3l0bkM1eXVHQVAzRkpKOEhBVHJ5dElqUUtXVHFLVDFmYWs4UHFxdUtZZ3Y3aU5YSDZzV1paWTgwdzlIRFJvWkl2NTBibHZGNWlVck1tOFh6dEEyMjFfdE9kZVpKMjF3QXhtMVhDZFI1ZlVIbW93RVlFVXAtV0lkU1Y4dV84Z0ptRmNQOWItOEZrUUJ3M2dHZE1abjJtWUticEN4WC1zSUpOUUU5ZjhOMTB1MFlBaXVNYzFCc0RTYVNqWVRPeXdXNUJkaW83MVRtcUtkbEdKNEhZR0M5MWh6QXVVekI0WUVXX2ZJQ0RHay1meGFVU2luY0FGc3E3ZXp3TVBPaHZuNk1OZExIQmNpeFpfb2FqcVY2RmJUTU5HTmZjZkpIb1BIMFhmVDlEM3dSXzF5OWlCNDdfbEdoRXFDSXo5d2hvYXZPTE0zZlNndkk4WmFVRzd0MWVKWlNzeWRIS0h1NHE3V1dlUUtVbG96NU1mcXI3YVI0SlNRbUFGbHlKR0VNcHprWVZjbTZwdXFUY08zWTl0SG1SWEtzMkt1QUJkNlRBZTg5NGxraGJyMnMtRjhvWmpGUC1WOVdKS09JY3B2a2JZOERzNFJMYzJHVUw1ZGJpek1vN1J3RDNFOFZ5ZW5ZbkpSdkJZY1BfZEVlandkUHdZVzFIeV9ibFF1ZjRqdDRWTmFma3Y3ZjExNGhHSUxKcXB1NTduVGFVSU1acmp6Rlh5UXlmdUlsU3VMX18tOWc9')
-        decrypted_content = fernet.decrypt(encrypted_data)
-        exec(decrypted_content.decode('utf-8'), globals())
+        config = load_config()
+        
+        headers = {
+            'accept': '*/*',
+            'accept-language': 'vi,en;q=0.9',
+            'cache-control': 'no-cache',
+            'country-code': 'vn',
+            'origin': 'https://xworld.info',
+            'pragma': 'no-cache',
+            'priority': 'u=1, i',
+            'referer': 'https://xworld.info/',
+            'sec-ch-ua': '"Google Chrome";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'cross-site',
+            'user-agent': 'Mozilla/5.0 (Linux; Android 13; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
+            'user-id': config['user_id'],
+            'user-login': 'login_v2',
+            'user-secret-key': config['user_secret_key'],
+            'xb-language': 'vi-VN',
+        }
+        
+        clear_screen()
+        display_header()
+        if not display_wallet_balance(headers):
+            fancy_print("❌ Không thể kết nối đến server. Vui lòng kiểm tra lại!", Fore.RED, Style.BRIGHT)
+            input("Nhấn Enter để thoát...")
+            return
+        
+        time.sleep(2)
+        
+        while True:
+            try:
+                clear_screen()
+                display_header()
+                display_wallet_balance(headers)
+                bot_chon, ki = chon_phong_thong_minh(headers, config)
+                
+                if ki == 0:
+                    fancy_print("⚠️ Không thể lấy thông tin kì hiện tại!", Fore.RED)
+                    time.sleep(5)
+                    continue
+                
+                time.sleep(3)
+                display_enhanced_stats()
+                result = kiem_tra_kq_nang_cao(headers, ki, bot_chon)
+                
+                if result:
+                    if result == 'Thắng':
+                        fancy_print("🎉 CHÚC MỪNG! BẠN ĐÃ THẮNG!", Fore.GREEN, Style.BRIGHT)
+                    else:
+                        fancy_print("😢 Chúc bạn may mắn lần sau!", Fore.YELLOW, Style.BRIGHT)
+                fancy_print("\n⏰ Chờ 10 giây trước khi tiếp tục...", Fore.CYAN)
+                time.sleep(10)
+                
+            except KeyboardInterrupt:
+                fancy_print("\n👋 Tạm biệt! Cảm ơn bạn đã sử dụng tool!", Fore.CYAN, Style.BRIGHT)
+                break
+            except Exception as e:
+                fancy_print(f"⚠️ Lỗi không mong muốn: {e}", Fore.RED, Style.BRIGHT)
+                fancy_print("🔄 Thử lại sau 5 giây...", Fore.YELLOW)
+                time.sleep(5)
+                
     except Exception as e:
-        print(f"Lỗi khi giải mã hoặc chạy: {str(e)}")
+        fancy_print(f"❌ Lỗi nghiêm trọng: {e}", Fore.RED, Style.BRIGHT)
+        input("Nhấn Enter để thoát...")
 
 if __name__ == "__main__":
     main()
