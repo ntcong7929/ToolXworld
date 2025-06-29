@@ -37,8 +37,25 @@ DATA_FILE = "dulieu.txt"
 STATS_FILE = "thongke.json"
 
 def load_config():
-    user_id=input('Nhập user-id của bạn:')
-    user_secret_key=input('Nhập secret-key của bạn:')
+    fancy_print("═"*50, Fore.CYAN, Style.BRIGHT)
+    text="""
+Thay vì phải tự lấy và nhập user-id và secret-key thì bạn chỉ cần nhập vào link vua thoát hiểm của bạn
+Các bước để lấy link:
+	1. vào trang web https://xworld.io/vi-VN
+	2.Đăng nhập vào tải khoản xworld của bạn
+	3.Tìm và nhấn vào vua thoát hiểm
+	4.nhấn lập tức truy cập
+	5.Copy link trang web và nhập vào đây
+"""
+    fancy_print(text, Fore.CYAN, Style.BRIGHT)
+    fancy_print("═"*50, Fore.CYAN, Style.BRIGHT)
+    link=input('NHẬP LINK CỦA BẠN: ')
+    a=link.split('&')
+    user_id=a[0].split('=')[1]
+    user_secret_key=a[1].split('=')[1]
+    fancy_print(f'user id của bạn là {user_id}', Fore.CYAN, Style.BRIGHT)
+    fancy_print(f'user secret key của bạn là {user_secret_key}', Fore.CYAN, Style.BRIGHT)
+    time.sleep(1)
     default_config = {
         "user_id": user_id,
         "user_secret_key": user_secret_key,
